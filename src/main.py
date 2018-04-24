@@ -8,7 +8,6 @@ import kivy
 kivy.require('1.10.0')
 
 from functools import partial
-from os import path
 
 from email.mime.text import MIMEText
 from smtplib import SMTP
@@ -43,6 +42,9 @@ def loadTheChildren():
 class UserManager(Screen):
 	"""
 	menu for managing the users
+
+	TODO: import csv
+	TODO: telefon numbers for sms? 
 	"""
 	def __init__ (self,**kwargs):
 		super(UserManager, self).__init__(**kwargs)  
@@ -72,7 +74,8 @@ class UserManager(Screen):
 
 	def addUser(self, entrys):
 		"""
-		TODO: Change Groups into Dropdown and add extra group management in trainer
+		Idea: Change Groups into Dropdown and add extra group management in trainer
+		Todo: Delete Button behind every user
 		"""
 		name = entrys[0]
 		mail = entrys[1]
@@ -321,7 +324,6 @@ class PlayerSelection(Screen):
 
 
 
-
 class TrainerManager(Screen):
 	"""
 	menu for changing mail and password of trainer
@@ -330,10 +332,21 @@ class TrainerManager(Screen):
 		super(TrainerManager, self).__init__(**kwargs)  
 		layout = BoxLayout(orientation="vertical")
 
-		self.nameInput = TextInput(text="Max Mustermann", multiline=False)
+		c.execute("select * from trainer")
+		results = c.fetchone()
+		trainerName = "Max Mustermann"
+		trainerMail = "test@test.de"
+		if len(results) > 0:
+			print(results)
+			trainerName = results[0]
+			trainerMail = results[1]
+
+
+
+		self.nameInput = TextInput(text=trainerName, multiline=False)
 		layout.add_widget(self.nameInput)
 
-		self.mailInput = TextInput(text="test@test.de", multiline=False)
+		self.mailInput = TextInput(text=trainerMail, multiline=False)
 		layout.add_widget(self.mailInput)
 
 		submitButton = Button(text='Ändern', size_hint=(1, .2))
@@ -354,6 +367,7 @@ class TrainerManager(Screen):
 		c.execute("DELETE FROM trainer")
 		c.execute('''INSERT INTO trainer VALUES(?,?)''', (self.nameInput.text, self.mailInput.text))
 		conn.commit()
+		sm.current = "Menu"
 
 
 class MenuScreen(Screen):
