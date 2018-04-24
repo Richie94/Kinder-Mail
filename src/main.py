@@ -10,6 +10,7 @@ kivy.require('1.10.0')
 from functools import partial
 from os import path
 
+from email.mime.text import MIMEText
 from smtplib import SMTP
 
 import sqlite3
@@ -25,44 +26,9 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
 from kivy.uix.dropdown import DropDown
 from kivy.uix.checkbox import CheckBox
+from kivy.uix.popup import Popup
 
 import config
-
-sm = ScreenManager()
-allInputs = []
-conn = sqlite3.connect('example.db')
-c = conn.cursor()
-
-def initDatabase():
-	c.execute('''CREATE TABLE IF NOT EXISTS users (name text, mail text, playgroup text)''')
-	c.execute('''CREATE TABLE IF NOT EXISTS trainer (name text, mail text, password text)''')
-
-def sendMailTo(toAddrs, fromAddr, name):
-	server = SMTP('smtp.gmail.com:587')
-	server.ehlo()
-	server.starttls()
-	server.login(config.username,config.password)
-	msg = "Test Mail an {}".format(name)
-	server.sendmail(fromAddr, toAddrs, msg)
-	server.quit()
-
-def loadGroups():
-	groups = sorted(set([u[2] for u in user]))
-	return groups
-
-
-def saveTheChildren():
-	"""
-	Insert users to database
-	Todo: Encrypt
-	"""
-	global user
-	updateUser()
-	# delete old entrys and update with new ones
-	c.execute('DELETE FROM users')
-	for u in user:
-		c.execute('''INSERT INTO users VALUES(?,?,?)''', (u[0], u[1], u[2]))
-	conn.commit()
 
 def loadTheChildren():
 	"""
@@ -74,21 +40,9 @@ def loadTheChildren():
 		user.append((row[0], row[1], row[2]))
 	return user
 
-def updateUser():
-	"""
-	Updates our user info by evaluating the test inputs
-	"""
-	global user
-	user = []
-	for inp in allInputs:
-		newInfo = [i.text for i in inp]
-		if "".join(newInfo) != "":
-			user.append(newInfo)
-	return user
-
 class UserManager(Screen):
 	"""
-	Menü zur Eingabe der Nutzer mit Mail und Gruppe
+	menu for managing the users
 	"""
 	def __init__ (self,**kwargs):
 		super(UserManager, self).__init__(**kwargs)  
@@ -143,7 +97,7 @@ class UserManager(Screen):
 		print(obj)
 
 	def toMenu(self, obj):
-		saveTheChildren()
+		self.saveTheChildren()
 		sm.current = "Menu"
 
 	def createNewPlayer(self, obj):
@@ -151,12 +105,35 @@ class UserManager(Screen):
 		self.addUser(user[-1])
 		self.layout.do_layout()
 
+	def saveTheChildren(self):
+		"""
+		Insert users to database
+		Todo: Encrypt
+		"""
+		global user
+		self.updateUser()
+		# delete old entrys and update with new ones
+		c.execute('DELETE FROM users')
+		for u in user:
+			c.execute('''INSERT INTO users VALUES(?,?,?)''', (u[0], u[1], u[2]))
+		conn.commit()
+
+	def updateUser(self):
+		"""
+		Updates our user info by evaluating the text inputs
+		"""
+		global user
+		user = []
+		for inp in allInputs:
+			newInfo = [i.text for i in inp]
+			if "".join(newInfo) != "":
+				user.append(newInfo)
+		return user
 
 
 class GameManager(Screen):
 	"""
-	Menü zur Auswahl der aktuellen Gruppe
-	-> danach erscheint Liste der zugehörigen Kinder die abgehakt werden kann
+	menu for selecting the current group
 	"""
 	
 	def __init__ (self,**kwargs):
@@ -170,7 +147,7 @@ class GameManager(Screen):
 		scb = GridLayout(cols=1, row_default_height='100dp', row_force_default=True, size_hint_y=None)
 		scb.bind(minimum_height=scb.setter('height'))
 
-		for group in loadGroups():
+		for group in self.loadGroups():
 			groupButton = Button(text=group)
 			groupButton.bind(on_release=self.toGroup)
 			scb.add_widget(groupButton)
@@ -186,7 +163,7 @@ class GameManager(Screen):
 
 		loadTheChildren()
 
-		for g in loadGroups():
+		for g in self.loadGroups():
 			if not g in self.groupScreens:
 				sm.add_widget(PlayerSelection(name="_{}_".format(g)))
 				self.groupScreens.append(g)
@@ -202,10 +179,14 @@ class GameManager(Screen):
 	def toGroup(self, obj):
 		sm.current = "_{}_".format(obj.text)
 
+	def loadGroups(self):
+		self.groups = sorted(set([u[2] for u in user]))
+		return self.groups
+
 
 class PlayerSelection(Screen):
 	"""
-	Menü zum Anklicken der Kinder
+	menu for managing which child is here
 	"""
 
 	def __init__ (self,**kwargs):
@@ -229,7 +210,7 @@ class PlayerSelection(Screen):
 		sc.add_widget(self.scb)
 
 		sendButton = Button(text='Sende Mail', size_hint=(1, .2))
-		sendButton.bind(on_release=self.submitMails)
+		sendButton.bind(on_release=self.askPassword)
 
 		backButton = Button(text='Zurück', size_hint=(1, .2))
 		backButton.bind(on_release=self.back)
@@ -259,32 +240,109 @@ class PlayerSelection(Screen):
 	def back(self, obj):
 		sm.current = "Spiel"
 
-	def submitMails(self, obj):
+	def askPassword(self, obj):
+		"""
+		asks for password for email
+		"""
+		self.server = SMTP('smtp.gmail.com:587')
+		self.server.ehlo()
+		self.server.starttls()
+
+		c.execute("Select mail from trainer")
+		self.trainerMail= c.fetchone()[0]
+
+		self.popBox = BoxLayout(orientation="vertical")
+
+		self.passInput = TextInput(password=True, multiline=False)
+		submit = Button(text="Einloggen")
+		submit.bind(on_release=self.loginToMail)
+
+		self.popBox.add_widget(Label(text="Bitte geben sie ihr E-Mail Passwort für ihre Mail ({}) ein:".format(self.trainerMail)))
+		self.popBox.add_widget(self.passInput)
+		self.popBox.add_widget(submit)
+
+		self.loginPopup = Popup(title='Einloggen',content=self.popBox, size_hint=(.8, .5))
+		self.loginPopup.open()
+
+	def loginToMail(self, obj):
+		"""
+		logs into mail and sends
+		"""
+		try:
+			#login
+			self.server.login(self.trainerMail, self.passInput.text)
+			print("Login Successful")
+
+			self.loginPopup.dismiss()
+			
+			mailPopBox = BoxLayout(orientation="vertical")
+			self.mailPop = Popup(title='Sende Mail',content=mailPopBox, size_hint=(.8, .5))
+
+			sendToNames = [pId.split("\t")[0] for pId in self.attend if self.attend[pId] == "normal"]
+			sendToNames = ", ".join(sendToNames)
+
+			submit = Button(text="Sende Mail")
+			submit.bind(on_release=self.sendMails)
+
+			cancel = Button(text="Abbrechen")
+			cancel.bind(on_release=self.mailPop.dismiss)
+			
+			mailPopBox.add_widget(Label(text="Send Mail an die Eltern von: {}".format(sendToNames)))
+			mailPopBox.add_widget(submit)
+			mailPopBox.add_widget(cancel)
+
+			
+			self.mailPop.open()
+			
+		except Exception as e:
+			self.popBox.children[2].text += "\n(Problem bei Login, Bitte erneut versuchen)" 
+			self.popBox.do_layout()
+			
+
+	def sendMails(self, obj):
+		c.execute("Select name from trainer")
+		trainerName = c.fetchone()[0]
 		for playerId in self.attend:
 			if self.attend[playerId] == "normal":
-				print(playerId)
-				# Todo: Send Mail
+				playerMail = playerId.split("\t")[1]
+				playerName = playerId.split("\t")[0]
+				subject = "Badminton-Benachrichtigung"
+				text = "Dies ist eine automatische Benachrichtigung, dass ihr Kind {} heute nicht zum Badminton erschienen ist.\nLiebe Grüße, {}".format(playerName,trainerName).encode("utf-8")
+
+				msg = MIMEText(text, "plain", "utf-8")
+				msg["Subject"] = subject
+				msg["From"] = self.trainerMail
+				msg["To"] = playerMail
+
+				self.server.send_message(msg)
+		self.mailPop.dismiss()
+		self.server.quit()
+		sm.current="Menu"
+
+
 
 
 class TrainerManager(Screen):
 	"""
-	Menü zur Eingabe der Sendemail + Passwort? + Gruppeneinstellung
+	menu for changing mail and password of trainer
 	"""
 	def __init__ (self,**kwargs):
 		super(TrainerManager, self).__init__(**kwargs)  
 		layout = BoxLayout(orientation="vertical")
 
-		mailInput = TextInput(text="test@test.de", multiline=False)
-		#mailInput.bind(text=updateTrainer)
-		layout.add_widget(mailInput)
+		self.nameInput = TextInput(text="Max Mustermann", multiline=False)
+		layout.add_widget(self.nameInput)
 
-		passInput = TextInput(text="*******", multiline=False)
-		#passInput.bind(text=updateUser)
-		layout.add_widget(passInput)
+		self.mailInput = TextInput(text="test@test.de", multiline=False)
+		layout.add_widget(self.mailInput)
+
+		submitButton = Button(text='Ändern', size_hint=(1, .2))
+		submitButton.bind(on_release=self.submit)
 
 		backButton = Button(text='Zurück', size_hint=(1, .2))
 		backButton.bind(on_release=self.back)
 
+		layout.add_widget(submitButton)
 		layout.add_widget(backButton)
 
 		self.add_widget(layout)
@@ -292,12 +350,16 @@ class TrainerManager(Screen):
 	def back(self, obj):
 		sm.current = "Menu"
 
+	def submit(self, obj):
+		c.execute("DELETE FROM trainer")
+		c.execute('''INSERT INTO trainer VALUES(?,?)''', (self.nameInput.text, self.mailInput.text))
+		conn.commit()
+
 
 class MenuScreen(Screen):
 	"""
-	Menü zum Wechseln der Screens
+	Menu for changing the screens
 	"""
-
 	def __init__ (self,**kwargs):
 		super(MenuScreen, self).__init__(**kwargs)  
 		layout = BoxLayout(padding=10, orientation="vertical")
@@ -314,8 +376,6 @@ class MenuScreen(Screen):
 		exitButton = Button(text='Schließen')
 		exitButton.bind(on_release=self.exitApp)
 
-
-		#myApp.get_running_app().stop()
 		layout.add_widget(gameManagerButton)
 		layout.add_widget(userManagerButton)
 		layout.add_widget(trainerManagerButton)
@@ -339,7 +399,7 @@ class MenuScreen(Screen):
 class KinderMailApp(App):
 
 	def build(self):
-		initDatabase()
+		self.initDatabase()
 
 		km = UserManager(name="User")
 		gm = GameManager(name="Spiel")
@@ -352,6 +412,16 @@ class KinderMailApp(App):
 		sm.add_widget(tm)
 		return sm
 
+	def initDatabase(self):
+		c.execute('''CREATE TABLE IF NOT EXISTS users (name text, mail text, playgroup text)''')
+		c.execute('''CREATE TABLE IF NOT EXISTS trainer (name text, mail text)''')
+		conn.commit()
+
 if __name__ == '__main__':
+	sm = ScreenManager()
+	allInputs = []
+	conn = sqlite3.connect('example.db')
+	c = conn.cursor()
+
 	myApp = KinderMailApp()
 	myApp.run()
