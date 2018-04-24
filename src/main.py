@@ -1,8 +1,18 @@
+#!/usr/bin/env python
+"""
+App script for sending e-mails to parents for missing children in sports class
+Author: Richard Kwasnicki
+"""
+
 import kivy
-kivy.require('1.10.0') # replace with your current kivy version !
+kivy.require('1.10.0')
 
 from functools import partial
 from os import path
+
+from smtplib import SMTP
+
+import sqlite3
 
 from kivy.app import App
 from kivy.uix.widget import Widget
@@ -16,8 +26,25 @@ from kivy.uix.textinput import TextInput
 from kivy.uix.dropdown import DropDown
 from kivy.uix.checkbox import CheckBox
 
+import config
+
 sm = ScreenManager()
 allInputs = []
+conn = sqlite3.connect('example.db')
+c = conn.cursor()
+
+def initDatabase():
+	c.execute('''CREATE TABLE IF NOT EXISTS users (name text, mail text, playgroup text)''')
+	c.execute('''CREATE TABLE IF NOT EXISTS trainer (name text, mail text, password text)''')
+
+def sendMailTo(toAddrs, fromAddr, name):
+	server = SMTP('smtp.gmail.com:587')
+	server.ehlo()
+	server.starttls()
+	server.login(config.username,config.password)
+	msg = "Test Mail an {}".format(name)
+	server.sendmail(fromAddr, toAddrs, msg)
+	server.quit()
 
 def loadGroups():
 	groups = sorted(set([u[2] for u in user]))
@@ -26,40 +53,43 @@ def loadGroups():
 
 def saveTheChildren():
 	"""
-	Saves the Data
+	Insert users to database
 	Todo: Encrypt
 	"""
 	global user
-	with open("database.txt", "w") as f:
-		for k in user:
-			f.write("{},{},{}\n".format(*k))
+	updateUser()
+	# delete old entrys and update with new ones
+	c.execute('DELETE FROM users')
+	for u in user:
+		c.execute('''INSERT INTO users VALUES(?,?,?)''', (u[0], u[1], u[2]))
+	conn.commit()
 
 def loadTheChildren():
+	"""
+	Read users from database
+	"""
 	global user
 	user = []
-	if path.exists("database.txt"):
-		with open("database.txt", "r") as f:
-			f = f.read().split("\n")[:-1]
-			for line in f:
-				user.append(line.split(","))
-
-			print(user)
+	for row in c.execute('SELECT * FROM users'):
+		user.append((row[0], row[1], row[2]))
 	return user
 
-def updateUser(instance, value):
+def updateUser():
+	"""
+	Updates our user info by evaluating the test inputs
+	"""
 	global user
 	user = []
 	for inp in allInputs:
-		user.append([i.text for i in inp])
-	saveTheChildren()
-	print(user)
+		newInfo = [i.text for i in inp]
+		if "".join(newInfo) != "":
+			user.append(newInfo)
 	return user
 
 class UserManager(Screen):
 	"""
 	Menü zur Eingabe der Nutzer mit Mail und Gruppe
 	"""
-
 	def __init__ (self,**kwargs):
 		super(UserManager, self).__init__(**kwargs)  
 		self.layout = BoxLayout(orientation="vertical")
@@ -95,15 +125,12 @@ class UserManager(Screen):
 		group = entrys[2]
 
 		nameInput = TextInput(text=str(name), multiline=False)
-		nameInput.bind(text=updateUser)
 		self.users.add_widget(nameInput)
 
 		mailInput = TextInput(text=str(mail), multiline=False)
-		mailInput.bind(text=updateUser)
 		self.users.add_widget(mailInput)
 
 		groupInput = TextInput(text=str(group), multiline=False, size_hint=(.3, 1))
-		groupInput.bind(text=updateUser)
 		self.users.add_widget(groupInput)
 
 		#delButton = Button(text="-")
@@ -112,22 +139,8 @@ class UserManager(Screen):
 
 		allInputs.append((nameInput, mailInput, groupInput))
 
-		# dropdown  = DropDown()
-		# for g in gruppen:
-		# 	btn = Button(text=g, size_hint_y=None)
-		# 	btn.bind(on_release=lambda btn: dropdown.select(btn.text))
-		# 	dropdown.add_widget(btn)
-
-		# mainbutton = Button(text=gruppe)
-
-		# mainbutton.bind(on_release=dropdown.open)
-		# dropdown.bind(on_select=lambda instance, x: setattr(mainbutton, 'text', x))
-		# self.users.add_widget(mainbutton)
-
 	def deleteUser(self, obj):
 		print(obj)
-		pass
-
 
 	def toMenu(self, obj):
 		saveTheChildren()
@@ -191,6 +204,9 @@ class GameManager(Screen):
 
 
 class PlayerSelection(Screen):
+	"""
+	Menü zum Anklicken der Kinder
+	"""
 
 	def __init__ (self,**kwargs):
 		super(PlayerSelection, self).__init__(**kwargs)
@@ -254,10 +270,17 @@ class TrainerManager(Screen):
 	"""
 	Menü zur Eingabe der Sendemail + Passwort? + Gruppeneinstellung
 	"""
-	
 	def __init__ (self,**kwargs):
 		super(TrainerManager, self).__init__(**kwargs)  
 		layout = BoxLayout(orientation="vertical")
+
+		mailInput = TextInput(text="test@test.de", multiline=False)
+		#mailInput.bind(text=updateTrainer)
+		layout.add_widget(mailInput)
+
+		passInput = TextInput(text="*******", multiline=False)
+		#passInput.bind(text=updateUser)
+		layout.add_widget(passInput)
 
 		backButton = Button(text='Zurück', size_hint=(1, .2))
 		backButton.bind(on_release=self.back)
@@ -316,6 +339,8 @@ class MenuScreen(Screen):
 class KinderMailApp(App):
 
 	def build(self):
+		initDatabase()
+
 		km = UserManager(name="User")
 		gm = GameManager(name="Spiel")
 		tm = TrainerManager(name="Trainer")
@@ -325,7 +350,6 @@ class KinderMailApp(App):
 		sm.add_widget(km)
 		sm.add_widget(gm)
 		sm.add_widget(tm)
-
 		return sm
 
 if __name__ == '__main__':
